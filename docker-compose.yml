@@ -1,0 +1,84 @@
+version: "3.3"
+
+services:
+  mongodb:
+    container_name: graylog_db
+    image: "mongo:5.0"
+    volumes:
+      - ./mongodb_data:/data/db
+    restart: "on-failure"
+    networks:
+      - graylog_network
+
+  opensearch:
+    container_name: graylog_search
+    image: "opensearchproject/opensearch:2.4.0"
+    environment:
+      - "OPENSEARCH_JAVA_OPTS=-Xms1g -Xmx1g"
+      - "bootstrap.memory_lock=true"
+      - "discovery.type=single-node"
+      - "action.auto_create_index=false"
+      - "plugins.security.ssl.http.enabled=false"
+      - "plugins.security.disabled=true"
+    ulimits:
+      memlock:
+        hard: -1
+        soft: -1
+    volumes:
+      - ./os_data:/usr/share/opensearch/data
+    restart: "on-failure"
+    networks:
+      - graylog_network
+
+  graylog:
+    container_name: graylog
+    hostname: "server"
+    image: "$GRAYLOG_IMAGE"
+    depends_on:
+      - opensearch
+      - mongodb
+    entrypoint: "/usr/bin/tini -- wait-for-it opensearch:9200 --  /docker-entrypoint.sh"
+    environment:
+      GRAYLOG_ROOT_TIMEZONE: "Europe/Lisbon"
+      GRAYLOG_NODE_ID_FILE: "/usr/share/graylog/data/config/node-id"
+      GRAYLOG_PASSWORD_SECRET: "${GRAYLOG_PASSWORD_SECRET}"
+      GRAYLOG_ROOT_PASSWORD_SHA2: "${GRAYLOG_ROOT_PASSWORD_SHA2}"
+      GRAYLOG_HTTP_BIND_ADDRESS: "0.0.0.0:9000"
+      GRAYLOG_HTTP_EXTERNAL_URI: "http://localhost:9000/"
+      GRAYLOG_ELASTICSEARCH_HOSTS: "http://opensearch:9200"
+      GRAYLOG_MONGODB_URI: "mongodb://mongodb:27017/graylog"
+    ports:
+    - "5044:5044/tcp"   # Beats
+    - "5140:5140/udp"   # Syslog
+    - "5140:5140/tcp"   # Syslog
+    - "$LOCAL:5555:5555/tcp"   # RAW TCP
+    - "$LOCAL:5555:5555/udp"   # RAW TCP
+    - "$LOCAL:9000:9000/tcp"   # Server API
+    - "$LOCAL:12201:12201/tcp" # GELF TCP
+    - "$LOCAL:12201:12201/udp" # GELF UDP
+    #- "10000:10000/tcp" # Custom TCP port
+    #- "10000:10000/udp" # Custom UDP port
+    - "$LOCAL:13301:13301/tcp" # Forwarder data
+    - "$LOCAL:13302:13302/tcp" # Forwarder config
+    volumes:
+      - ./graylog_data:/usr/share/graylog/data/data
+    restart: "on-failure"
+    networks:
+      - graylog_network
+
+  geoipupdate:
+    container_name: geoipupdate
+    image: maxmindinc/geoipupdate
+    restart: unless-stopped
+    environment:
+      - GEOIPUPDATE_ACCOUNT_ID=
+      - GEOIPUPDATE_LICENSE_KEY=
+      - 'GEOIPUPDATE_EDITION_IDS=GeoLite2-ASN GeoLite2-City GeoLite2-Country'
+      - GEOIPUPDATE_FREQUENCY=72
+    networks:
+      - graylog_network
+    volumes:
+      - ./graylog/graylog_data:/usr/share/GeoIP
+
+networks:
+  graylog_network:
